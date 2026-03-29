@@ -1,0 +1,162 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  /* Brutalist Theme Configuration */
+  --font-display: "Space Grotesk", sans-serif;
+  --font-mono: "JetBrains Mono", monospace;
+
+  --radius-sm: 0px;
+  --radius-md: 0px;
+  --radius-lg: 0px;
+  --radius-xl: 0px;
+
+  --color-background: hsl(var(--background));
+  --color-foreground: hsl(var(--foreground));
+  
+  --color-primary: hsl(var(--primary));
+  --color-primary-foreground: hsl(var(--primary-foreground));
+  
+  --color-secondary: hsl(var(--secondary));
+  --color-secondary-foreground: hsl(var(--secondary-foreground));
+  
+  --color-muted: hsl(var(--muted));
+  --color-muted-foreground: hsl(var(--muted-foreground));
+  
+  --color-accent: hsl(var(--accent));
+  --color-accent-foreground: hsl(var(--accent-foreground));
+  
+  --color-destructive: hsl(var(--destructive));
+  --color-destructive-foreground: hsl(var(--destructive-foreground));
+  
+  --color-border: hsl(var(--border));
+  --color-input: hsl(var(--input));
+  --color-ring: hsl(var(--ring));
+  
+  --color-card: hsl(var(--card));
+  --color-card-foreground: hsl(var(--card-foreground));
+  --color-popover: hsl(var(--popover));
+  --color-popover-foreground: hsl(var(--popover-foreground));
+
+  --animate-marquee: marquee 25s linear infinite;
+  --animate-glitch: glitch 1s linear infinite;
+
+  @keyframes marquee {
+    from { transform: translateX(0); }
+    to { transform: translateX(-100%); }
+  }
+
+  @keyframes glitch {
+    2%, 64% { transform: translate(2px,0) skew(0deg); }
+    4%, 60% { transform: translate(-2px,0) skew(0deg); }
+    62% { transform: translate(0,0) skew(5deg); }
+  }
+}
+
+/* BASE VARIABLES - ACID / DARK MODE DEFAULT */
+:root {
+  /* Acid Green & Deep Black */
+  --background: 0 0% 4%; /* #0a0a0a */
+  --foreground: 0 0% 95%; /* #f2f2f2 */
+
+  /* Neon Green Accent */
+  --primary: 100 100% 50%; /* #39FF14 - Neon Green */
+  --primary-foreground: 0 0% 0%; /* Black text on neon */
+
+  /* Raw Gray */
+  --secondary: 0 0% 15%; 
+  --secondary-foreground: 0 0% 98%;
+
+  /* Muted technical details */
+  --muted: 0 0% 10%;
+  --muted-foreground: 0 0% 60%;
+
+  --accent: 100 100% 50%;
+  --accent-foreground: 0 0% 0%;
+
+  --destructive: 0 100% 50%;
+  --destructive-foreground: 0 0% 98%;
+
+  --border: 0 0% 20%;
+  --input: 0 0% 20%;
+  --ring: 100 100% 50%;
+
+  --card: 0 0% 5%;
+  --card-foreground: 0 0% 95%;
+
+  --popover: 0 0% 5%;
+  --popover-foreground: 0 0% 95%;
+
+  --radius: 0px; /* NO ROUNDED CORNERS */
+}
+
+/* Force dark mode mostly, but define light just in case */
+.dark {
+  --background: 0 0% 4%;
+  --foreground: 0 0% 95%;
+  --primary: 100 100% 50%;
+  --primary-foreground: 0 0% 0%;
+  --secondary: 0 0% 15%;
+  --secondary-foreground: 0 0% 98%;
+  --muted: 0 0% 10%;
+  --muted-foreground: 0 0% 60%;
+  --accent: 100 100% 50%;
+  --accent-foreground: 0 0% 0%;
+  --destructive: 0 62.8% 30.6%;
+  --destructive-foreground: 0 0% 98%;
+  --border: 0 0% 20%;
+  --input: 0 0% 20%;
+  --ring: 100 100% 50%;
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply font-mono bg-background text-foreground antialiased;
+    background-image: 
+      linear-gradient(rgba(18, 18, 18, 0.8), rgba(18, 18, 18, 0.8)),
+      repeating-linear-gradient(
+        0deg,
+        transparent,
+        transparent 1px,
+        rgba(57, 255, 20, 0.03) 1px,
+        rgba(57, 255, 20, 0.03) 2px
+      );
+    background-size: 100% 100%, 100% 4px;
+  }
+  
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-display uppercase tracking-tight font-bold;
+  }
+}
+
+@layer utilities {
+  .text-stroke {
+    -webkit-text-stroke: 1px hsl(var(--foreground));
+    color: transparent;
+  }
+  
+  .text-stroke-primary {
+    -webkit-text-stroke: 1px hsl(var(--primary));
+    color: transparent;
+  }
+
+  .brutal-border {
+    @apply border border-border bg-card;
+    box-shadow: 4px 4px 0px 0px hsl(var(--primary));
+  }
+  
+  .brutal-border-hover:hover {
+    transform: translate(-2px, -2px);
+    box-shadow: 6px 6px 0px 0px hsl(var(--primary));
+  }
+
+  .brutal-btn {
+    @apply bg-primary text-primary-foreground px-6 py-3 font-bold uppercase tracking-wider hover:bg-white transition-colors duration-200;
+    clip-path: polygon(0 0, 100% 0, 100% 85%, 95% 100%, 0 100%);
+  }
+}
