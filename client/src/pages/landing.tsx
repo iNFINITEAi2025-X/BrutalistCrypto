@@ -77,6 +77,11 @@ function Hero() {
             >
               {deployed ? "Stop Node" : "Deploy Node"} <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
             </button>
+            <Link href="/trade">
+              <button className="px-6 py-3 font-mono uppercase tracking-wider border border-border hover:bg-border transition-colors">
+                Paper Trading
+              </button>
+            </Link>
             <Link href="/docs">
               <button className="px-6 py-3 font-mono uppercase tracking-wider border border-border hover:bg-border transition-colors">
                 Read Documentation
