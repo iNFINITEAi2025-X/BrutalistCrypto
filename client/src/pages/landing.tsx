@@ -4,8 +4,8 @@ import { motion } from "framer-motion";
 import { ArrowRight, Terminal, Cpu, Shield, Zap, Globe, Lock } from "lucide-react";
 
 // Assets
-import wireframeImg from "@assets/generated_images/wireframe_brutalist_structure.png";
-import noiseTexture from "@assets/generated_images/gritty_noise_texture.png";
+import wireframeImg from "@assets/generated_images/wireframe_brutalist_structure.svg";
+import noiseTexture from "@assets/generated_images/gritty_noise_texture.svg";
 
 export default function Landing() {
   return (

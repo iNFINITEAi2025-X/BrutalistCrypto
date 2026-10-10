@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link } from "wouter";
 import { Terminal, ChevronRight, Copy, Check, ArrowLeft } from "lucide-react";
-import schematicImg from "@assets/generated_images/technical_schematic_blueprint.png";
+import schematicImg from "@assets/generated_images/technical_schematic_blueprint.svg";
 
 export default function Docs() {
   return (
