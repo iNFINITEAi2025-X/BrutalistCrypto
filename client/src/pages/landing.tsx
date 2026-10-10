@@ -4,8 +4,8 @@ import { motion } from "framer-motion";
 import { ArrowRight, Terminal, Cpu, Shield, Zap, Globe, Lock } from "lucide-react";
 
 // Assets
-import wireframeImg from "@assets/generated_images/wireframe_brutalist_structure.png";
-import noiseTexture from "@assets/generated_images/gritty_noise_texture.png";
+import wireframeImg from "@assets/generated_images/wireframe_brutalist_structure.svg";
+import noiseTexture from "@assets/generated_images/gritty_noise_texture.svg";
 
 export default function Landing() {
   return (
@@ -44,6 +44,7 @@ function Navbar() {
 }
 
 function Hero() {
+  const [deployed, setDeployed] = useState(false);
   return (
     <section className="relative min-h-screen flex items-center justify-center pt-16 border-b border-border overflow-hidden">
       {/* Background Layers */}
@@ -69,9 +70,18 @@ function Hero() {
           </p>
           
           <div className="flex flex-col md:flex-row gap-4 pt-8">
-            <button className="brutal-btn flex items-center gap-2 group">
-              Deploy Node <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
+            <button
+              className="brutal-btn flex items-center gap-2 group"
+              onClick={() => setDeployed((d) => !d)}
+              data-testid="button-deploy-toggle"
+            >
+              {deployed ? "Stop Node" : "Deploy Node"} <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
             </button>
+            <Link href="/trade">
+              <button className="px-6 py-3 font-mono uppercase tracking-wider border border-border hover:bg-border transition-colors">
+                Paper Trading
+              </button>
+            </Link>
             <Link href="/docs">
               <button className="px-6 py-3 font-mono uppercase tracking-wider border border-border hover:bg-border transition-colors">
                 Read Documentation
