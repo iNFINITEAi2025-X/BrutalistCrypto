@@ -159,7 +159,10 @@ npm install -g @nexus-infra/cli
 nexus auth login --key=nx_live_89234...
 
 # Deploy a standard Ethereum node
-nexus deploy --chain=eth --network=mainnet --type=archive`} 
+nexus deploy --chain=eth --network=mainnet --type=archive
+
+# Stop a running node
+nexus stop --chain=eth --network=mainnet`} 
         />
 
         <h2 className="font-display text-3xl font-bold uppercase mb-6 pt-8">Configuration</h2>
