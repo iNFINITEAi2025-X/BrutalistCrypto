@@ -113,7 +113,7 @@ export type AlgorithmParams = z.infer<typeof algorithmParamsSchema>;
 
 export const paramsSchemaForAlgorithm: Record<
   AlgorithmType,
-  z.ZodType<AlgorithmParams>
+  z.ZodTypeAny
 > = {
   momentum: momentumParamsSchema,
   mean_reversion: meanReversionParamsSchema,

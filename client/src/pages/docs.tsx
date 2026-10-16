@@ -31,6 +31,11 @@ function Navbar() {
           </span>
         </div>
         <div className="flex items-center gap-4 font-mono text-sm">
+          <Link href="/trades">
+            <a className="hover:text-primary uppercase tracking-widest text-xs cursor-pointer">
+              Trades
+            </a>
+          </Link>
           <Link href="/">
             <a className="flex items-center gap-2 hover:text-primary uppercase tracking-widest text-xs">
               <ArrowLeft className="w-3 h-3" /> Back to Home
