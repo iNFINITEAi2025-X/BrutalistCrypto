@@ -6,6 +6,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import NotFound from "@/pages/not-found";
 import Landing from "@/pages/landing";
 import Docs from "@/pages/docs";
+import Trades from "@/pages/trades";
 
 function Router() {
   return (
@@ -13,6 +14,7 @@ function Router() {
       {/* Route to Landing Page */}
       <Route path="/" component={Landing} />
       <Route path="/docs" component={Docs} />
+      <Route path="/trades" component={Trades} />
       <Route component={NotFound} />
     </Switch>
   );
