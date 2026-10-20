@@ -149,6 +149,27 @@ export class PaperTrader {
     }
   }
 
+  /** Execute an externally supplied signal against the paper portfolio. */
+  applySignal(side: "BUY" | "SELL", price?: number) {
+    const p = price ?? this.state().price;
+    if (!(p > 0)) throw new Error("price must be positive");
+    const fee = 1 - this.feePct / 100;
+    if (side === "BUY" && this.pf.cash > 0) {
+      const qty = (this.pf.cash * fee) / p;
+      this.entryCost = this.pf.cash;
+      this.trades.push({ t: Date.now(), side, price: p, qty });
+      this.pf = { cash: 0, qty };
+      return true;
+    }
+    if (side === "SELL" && this.pf.qty > 0) {
+      const proceeds = this.pf.qty * p * fee;
+      this.trades.push({ t: Date.now(), side, price: p, qty: this.pf.qty, pnl: proceeds - this.entryCost });
+      this.pf = { cash: proceeds, qty: 0 };
+      return true;
+    }
+    return false;
+  }
+
   start() {
     if (this.running) return;
     this.running = true;
@@ -171,4 +192,15 @@ export class PaperTrader {
       trades: this.trades.slice(-50), candles: this.candles.slice(-200),
     };
   }
+}
+
+/** Run the crossover backtest over a grid of fast/slow periods; best return first. */
+export function sweep(candles: Candle[], fasts: number[], slows: number[], startingCash: number, feePct: number) {
+  const rows: { fast: number; slow: number; returnPct: number; maxDrawdownPct: number; trades: number }[] = [];
+  for (const fast of fasts) for (const slow of slows) {
+    if (slow <= fast || candles.length < slow + 1) continue;
+    const r = backtest(candles, { fast, slow, startingCash, feePct });
+    rows.push({ fast, slow, returnPct: r.returnPct, maxDrawdownPct: r.maxDrawdownPct, trades: r.trades.length });
+  }
+  return rows.sort((a, b) => b.returnPct - a.returnPct);
 }
