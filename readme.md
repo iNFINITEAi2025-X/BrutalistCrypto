@@ -198,3 +198,75 @@ npm run check      # typecheck
 
 Open `/trades` for the engine console: create a strategy, start it, simulate market
 ticks, watch the trades log fill, and wire a webhook to stream signed events out.
+
+---
+
+## 7. DaaS — Distribution, Licensing & Admin Audit
+
+The engine doubles as a **Distribution-as-a-Service** layer with built-in
+record-keeping, an AI bookkeeper, and a daily audit approval workflow.
+
+### 7.1 Accounts & roles
+
+- Session-based auth (`express-session`). Passwords hashed with scrypt.
+- Roles: `admin` and `user`. A default `admin` account is seeded on first boot
+  (password from `ADMIN_PASSWORD` env, default `admin` — change in production;
+  also set `SESSION_SECRET`).
+- `POST /api/auth/login` · `POST /api/auth/logout` · `GET /api/auth/me`
+
+### 7.2 Distribution
+
+- **Releases** — admins publish versioned artifacts (base64 upload via UI),
+  channel-tagged (`stable`/`beta`/`nightly`), SHA-256 integrity hash computed
+  server-side. Public listing at `GET /api/releases` never includes payloads.
+- **Download** — `GET /api/releases/:id/download` (auth required). Streams the
+  artifact with `X-Nexus-SHA256` header. Optionally pass a license key via
+  `?key=` or `X-Nexus-License` header to meter the download against a license.
+- **Licenses** — admin-generated `NEXUS-*` keys with optional download caps and
+  expiry; revocable. Overuse/expiry anomalies are flagged by the auditor.
+- **Records** — every download is recorded (release, user, license, IP, UA).
+
+### 7.3 AI bookkeeper
+
+A deterministic expert-system agent (`server/audit/bookkeeper.ts`) that:
+
+- posts **ledger entries** for every trade fee, realized P&L, and distribution
+  event (`/api/admin/ledger`);
+- writes every admin/user action to an **immutable audit log**
+  (`/api/admin/audit-log`);
+- runs **system audits** — heuristic scans for trade-integrity violations,
+  license overuse, expired-but-active keys, and webhook failure spikes.
+  Trigger manually via `POST /api/admin/audits/run`.
+
+### 7.4 Daily audit approval
+
+- Once per day (and on boot, then hourly) the bookkeeper compiles a **daily
+  audit package**: a pass/fail checklist (trades integrity, license
+  compliance, webhook health, ledger activity, distribution records),
+  aggregate totals, and anomaly count.
+- Packages sit in `pending` until an **Admin approves or rejects** them from
+  `/admin` → Daily Audits, optionally with a review note. The decision,
+  reviewer, and note are permanently recorded and written to the audit log.
+
+| Method | Path                                      | Description                          |
+| ------ | ----------------------------------------- | ------------------------------------ |
+| GET    | `/api/releases`                           | Public: list published releases      |
+| GET    | `/api/releases/:id/download`              | Auth: download artifact (recorded)   |
+| GET    | `/api/admin/releases`                     | Admin: list all releases             |
+| POST   | `/api/admin/releases`                     | Admin: publish release               |
+| PATCH  | `/api/admin/releases/:id`                 | Admin: update / unpublish            |
+| DELETE | `/api/admin/releases/:id`                 | Admin: delete                        |
+| GET    | `/api/admin/licenses`                     | Admin: list licenses                 |
+| POST   | `/api/admin/licenses`                     | Admin: generate license key          |
+| PATCH  | `/api/admin/licenses/:id`                 | Admin: update / revoke               |
+| GET    | `/api/admin/downloads`                    | Admin: download records              |
+| GET    | `/api/admin/ledger`                       | Admin: bookkeeper ledger             |
+| GET    | `/api/admin/audit-log`                    | Admin: immutable audit log           |
+| POST   | `/api/admin/audits/run`                   | Admin: run system audit scan         |
+| GET    | `/api/admin/audits/daily`                 | Admin: list daily audit packages     |
+| POST   | `/api/admin/audits/daily/generate`        | Admin: generate package for a date   |
+| POST   | `/api/admin/audits/daily/:id/review`      | Admin: approve/reject with checklist |
+| GET    | `/api/admin/users`                        | Admin: list users                    |
+| PATCH  | `/api/admin/users/:id`                    | Admin: change role                   |
+
+UI routes: `/login`, `/download` (user-facing releases), `/admin` (dashboard).
