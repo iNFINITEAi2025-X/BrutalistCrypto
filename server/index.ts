@@ -36,12 +36,38 @@ app.use(
     store: new MemoryStore({ checkPeriod: 86_400_000 }),
     cookie: {
       httpOnly: true,
+      // SameSite=Lax blocks cross-site POSTs from carrying the session cookie,
+      // which is our primary CSRF defence for this JSON API.
       sameSite: "lax",
       secure: process.env.NODE_ENV === "production",
       maxAge: 7 * 24 * 3600 * 1000,
     },
   }),
 );
+
+// CSRF mitigation: reject state-changing requests that present a cross-site
+// Origin header. Combined with SameSite=Lax cookies and JSON-only bodies
+// (which require a CORS preflight for cross-origin fetch), this prevents
+// classic CSRF on the session cookie.
+app.use((req, res, next) => {
+  if (["POST", "PUT", "PATCH", "DELETE"].includes(req.method)) {
+    const origin = req.get("origin");
+    if (origin) {
+      try {
+        const host = new URL(origin).host;
+        if (host !== req.get("host")) {
+          res.status(403).json({ message: "Cross-site request rejected" });
+          return;
+        }
+      } catch {
+        res.status(403).json({ message: "Invalid Origin header" });
+        return;
+      }
+    }
+  }
+  next();
+});
+
 app.use(attachUser);
 
 export function log(message: string, source = "express") {

@@ -406,7 +406,27 @@ export async function registerRoutes(
   // Auth
   // -------------------------------------------------------------------------
 
-  app.post("/api/auth/login", async (req, res) => {
+  // Simple in-memory rate limiter for login attempts (per IP).
+  const loginAttempts = new Map<string, { count: number; resetAt: number }>();
+  const LOGIN_WINDOW_MS = 60_000;
+  const LOGIN_MAX_ATTEMPTS = 10;
+  function loginRateLimit(req: Request, res: Response, next: () => void): void {
+    const key = req.ip ?? "unknown";
+    const now = Date.now();
+    const entry = loginAttempts.get(key);
+    if (entry && entry.resetAt > now) {
+      if (entry.count >= LOGIN_MAX_ATTEMPTS) {
+        res.status(429).json({ message: "Too many login attempts, slow down" });
+        return;
+      }
+      entry.count++;
+    } else {
+      loginAttempts.set(key, { count: 1, resetAt: now + LOGIN_WINDOW_MS });
+    }
+    next();
+  }
+
+  app.post("/api/auth/login", loginRateLimit, async (req, res) => {
     const parsed = loginSchema.safeParse(req.body);
     if (!parsed.success) {
       return badRequest(res, "username and password required");
