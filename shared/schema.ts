@@ -12,10 +12,15 @@ import {
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
+export const USER_ROLES = ["admin", "user"] as const;
+export type UserRole = (typeof USER_ROLES)[number];
+
 export const users = pgTable("users", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   username: text("username").notNull().unique(),
   password: text("password").notNull(),
+  role: text("role").notNull().default("user"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
 export const insertUserSchema = createInsertSchema(users).pick({
@@ -23,8 +28,15 @@ export const insertUserSchema = createInsertSchema(users).pick({
   password: true,
 });
 
+export const loginSchema = z.object({
+  username: z.string().min(1),
+  password: z.string().min(1),
+});
+export type LoginRequest = z.infer<typeof loginSchema>;
+
 export type InsertUser = z.infer<typeof insertUserSchema>;
 export type User = typeof users.$inferSelect;
+export type PublicUser = Omit<User, "password">;
 
 // ---------------------------------------------------------------------------
 // TRADING ENGINE
@@ -281,3 +293,164 @@ export interface BacktestSummary {
   finalPosition: number;
   tradeIds: string[];
 }
+
+// ---------------------------------------------------------------------------
+// DAAS — distribution, licensing, bookkeeping & audits
+// ---------------------------------------------------------------------------
+
+export const releases = pgTable("releases", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  version: text("version").notNull(),
+  channel: text("channel").notNull().default("stable"),
+  notes: text("notes").notNull().default(""),
+  artifactName: text("artifact_name").notNull(),
+  artifactData: text("artifact_data").notNull(),
+  sha256: text("sha256").notNull(),
+  sizeBytes: integer("size_bytes").notNull(),
+  published: boolean("published").notNull().default(true),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const insertReleaseSchema = z.object({
+  version: z.string().min(1),
+  channel: z.string().min(1).default("stable"),
+  notes: z.string().default(""),
+  artifactName: z.string().min(1),
+  artifactData: z.string().min(1), // base64-encoded artifact
+  published: z.boolean().default(true),
+});
+export const updateReleaseSchema = z.object({
+  version: z.string().min(1).optional(),
+  channel: z.string().min(1).optional(),
+  notes: z.string().optional(),
+  published: z.boolean().optional(),
+});
+export type InsertRelease = z.infer<typeof insertReleaseSchema>;
+export type UpdateRelease = z.infer<typeof updateReleaseSchema>;
+export type Release = typeof releases.$inferSelect;
+/** Release shape exposed publicly — never includes artifactData. */
+export type PublicRelease = Omit<Release, "artifactData">;
+
+export const LICENSE_STATUSES = ["active", "revoked"] as const;
+export type LicenseStatus = (typeof LICENSE_STATUSES)[number];
+
+export const licenses = pgTable("licenses", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  key: text("key").notNull().unique(),
+  userId: varchar("user_id"),
+  label: text("label").notNull().default(""),
+  status: text("status").notNull().default("active"),
+  maxDownloads: integer("max_downloads").notNull().default(0), // 0 = unlimited
+  downloadsUsed: integer("downloads_used").notNull().default(0),
+  expiresAt: timestamp("expires_at"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const insertLicenseSchema = z.object({
+  userId: z.string().min(1).optional(),
+  label: z.string().default(""),
+  maxDownloads: z.number().int().min(0).default(0),
+  expiresAt: z.string().datetime().optional(),
+});
+export const updateLicenseSchema = z.object({
+  label: z.string().optional(),
+  status: z.enum(LICENSE_STATUSES).optional(),
+  maxDownloads: z.number().int().min(0).optional(),
+});
+export type InsertLicense = z.infer<typeof insertLicenseSchema>;
+export type UpdateLicense = z.infer<typeof updateLicenseSchema>;
+export type License = typeof licenses.$inferSelect;
+
+export const downloads = pgTable("downloads", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  releaseId: varchar("release_id").notNull(),
+  licenseId: varchar("license_id"),
+  userId: varchar("user_id"),
+  ip: text("ip").notNull().default(""),
+  userAgent: text("user_agent").notNull().default(""),
+  downloadedAt: timestamp("downloaded_at").notNull().defaultNow(),
+});
+export type Download = typeof downloads.$inferSelect;
+
+export const AUDIT_SEVERITIES = ["info", "warning", "critical"] as const;
+export type AuditSeverity = (typeof AUDIT_SEVERITIES)[number];
+
+/** Immutable bookkeeping/audit event written by the AI bookkeeper & system. */
+export const auditLog = pgTable("audit_log", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  ts: timestamp("ts").notNull().defaultNow(),
+  actor: text("actor").notNull().default("system"), // username | "system" | "ai-bookkeeper"
+  action: text("action").notNull(),
+  entity: text("entity").notNull().default(""),
+  entityId: text("entity_id").notNull().default(""),
+  detail: jsonb("detail").notNull().default({}),
+  severity: text("severity").notNull().default("info"),
+});
+export type AuditLogEntry = typeof auditLog.$inferSelect;
+
+/** AI bookkeeper account ledger entries (double-entry style lines). */
+export const LEDGER_CATEGORIES = [
+  "fees",
+  "pnl",
+  "distribution",
+  "operations",
+] as const;
+export type LedgerCategory = (typeof LEDGER_CATEGORIES)[number];
+
+export const ledgerEntries = pgTable("ledger_entries", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  ts: timestamp("ts").notNull().defaultNow(),
+  category: text("category").notNull(),
+  description: text("description").notNull(),
+  amountUsd: doublePrecision("amount_usd").notNull(),
+  reference: text("reference").notNull().default(""),
+  createdBy: text("created_by").notNull().default("ai-bookkeeper"),
+});
+export type LedgerEntry = typeof ledgerEntries.$inferSelect;
+
+export const DAILY_AUDIT_STATUSES = ["pending", "approved", "rejected"] as const;
+export type DailyAuditStatus = (typeof DAILY_AUDIT_STATUSES)[number];
+
+export const CHECKLIST_ITEM_STATUSES = [
+  "pending",
+  "passed",
+  "failed",
+] as const;
+export type ChecklistItemStatus = (typeof CHECKLIST_ITEM_STATUSES)[number];
+
+export interface AuditChecklistItem {
+  key: string;
+  label: string;
+  status: ChecklistItemStatus;
+  detail: string;
+}
+
+/** One row per day: automated system audit + admin approval checklist. */
+export const dailyAudits = pgTable("daily_audits", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  date: text("date").notNull().unique(), // YYYY-MM-DD (UTC)
+  status: text("status").notNull().default("pending"),
+  checklist: jsonb("checklist").notNull(), // AuditChecklistItem[]
+  totals: jsonb("totals").notNull().default({}),
+  anomalyCount: integer("anomaly_count").notNull().default(0),
+  generatedBy: text("generated_by").notNull().default("ai-bookkeeper"),
+  reviewedBy: text("reviewed_by"),
+  reviewedAt: timestamp("reviewed_at"),
+  reviewNote: text("review_note").notNull().default(""),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const reviewDailyAuditSchema = z.object({
+  decision: z.enum(["approved", "rejected"]),
+  checklist: z
+    .array(
+      z.object({
+        key: z.string().min(1),
+        status: z.enum(["passed", "failed"]),
+      }),
+    )
+    .optional(),
+  note: z.string().default(""),
+});
+export type ReviewDailyAuditRequest = z.infer<typeof reviewDailyAuditSchema>;
+export type DailyAudit = typeof dailyAudits.$inferSelect;

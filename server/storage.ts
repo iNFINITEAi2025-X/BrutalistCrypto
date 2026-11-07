@@ -11,8 +11,34 @@ import {
   type InsertWebhook,
   type UpdateWebhook,
   type WebhookDelivery,
+  type Release,
+  type PublicRelease,
+  type License,
+  type Download,
+  type AuditLogEntry,
+  type LedgerEntry,
+  type DailyAudit,
+  type AuditChecklistItem,
 } from "@shared/schema";
-import { randomUUID } from "crypto";
+import { randomUUID, createHash, scryptSync, timingSafeEqual } from "crypto";
+
+export function hashPassword(password: string, salt?: string): string {
+  const s = salt ?? randomUUID();
+  const hash = scryptSync(password, s, 32).toString("hex");
+  return `${s}:${hash}`;
+}
+
+export function verifyPassword(password: string, stored: string): boolean {
+  const [salt, hash] = stored.split(":");
+  if (!salt || !hash) return false;
+  const candidate = scryptSync(password, salt, 32);
+  const expected = Buffer.from(hash, "hex");
+  return candidate.length === expected.length && timingSafeEqual(candidate, expected);
+}
+
+export function sha256Hex(data: string | Buffer): string {
+  return createHash("sha256").update(data).digest("hex");
+}
 
 export interface TradeQuery {
   strategyId?: string;
@@ -63,6 +89,66 @@ export interface IStorage {
       deliveredAt?: Date;
     },
   ): Promise<WebhookDelivery>;
+
+  // Users / auth
+  listUsers(): Promise<User[]>;
+  updateUserRole(id: string, role: string): Promise<User | undefined>;
+
+  // Releases (DaaS distribution)
+  getReleases(publishedOnly?: boolean): Promise<Release[]>;
+  getRelease(id: string): Promise<Release | undefined>;
+  createRelease(
+    release: Omit<Release, "id" | "createdAt" | "sha256" | "sizeBytes">,
+  ): Promise<Release>;
+  updateRelease(
+    id: string,
+    update: Partial<Pick<Release, "version" | "channel" | "notes" | "published">>,
+  ): Promise<Release | undefined>;
+  deleteRelease(id: string): Promise<boolean>;
+
+  // Licenses
+  getLicenses(): Promise<License[]>;
+  getLicense(id: string): Promise<License | undefined>;
+  getLicenseByKey(key: string): Promise<License | undefined>;
+  createLicense(
+    license: Pick<License, "userId" | "label" | "maxDownloads" | "expiresAt">,
+  ): Promise<License>;
+  updateLicense(
+    id: string,
+    update: Partial<Pick<License, "label" | "status" | "maxDownloads">>,
+  ): Promise<License | undefined>;
+  incrementLicenseDownloads(id: string): Promise<void>;
+
+  // Downloads
+  getDownloads(): Promise<Download[]>;
+  createDownload(
+    download: Omit<Download, "id" | "downloadedAt">,
+  ): Promise<Download>;
+
+  // Audit log / ledger
+  appendAuditLog(
+    entry: Omit<AuditLogEntry, "id" | "ts"> & { ts?: Date },
+  ): Promise<AuditLogEntry>;
+  getAuditLog(limit?: number): Promise<AuditLogEntry[]>;
+  appendLedgerEntry(
+    entry: Omit<LedgerEntry, "id" | "ts"> & { ts?: Date },
+  ): Promise<LedgerEntry>;
+  getLedgerEntries(limit?: number): Promise<LedgerEntry[]>;
+
+  // Daily audits
+  getDailyAudits(): Promise<DailyAudit[]>;
+  getDailyAudit(id: string): Promise<DailyAudit | undefined>;
+  getDailyAuditByDate(date: string): Promise<DailyAudit | undefined>;
+  createDailyAudit(
+    audit: Omit<DailyAudit, "id" | "createdAt" | "reviewedBy" | "reviewedAt" | "reviewNote">,
+  ): Promise<DailyAudit>;
+  reviewDailyAudit(
+    id: string,
+    decision: "approved" | "rejected",
+    reviewer: string,
+    note: string,
+    checklist?: AuditChecklistItem[],
+  ): Promise<DailyAudit | undefined>;
 }
 
 export class MemStorage implements IStorage {
@@ -72,6 +158,12 @@ export class MemStorage implements IStorage {
   private ticks: MarketTick[];
   private webhooks: Map<string, Webhook>;
   private deliveries: WebhookDelivery[];
+  private releases: Map<string, Release>;
+  private licenses: Map<string, License>;
+  private downloads: Download[];
+  private auditLog: AuditLogEntry[];
+  private ledger: LedgerEntry[];
+  private dailyAudits: Map<string, DailyAudit>;
 
   constructor() {
     this.users = new Map();
@@ -80,6 +172,12 @@ export class MemStorage implements IStorage {
     this.ticks = [];
     this.webhooks = new Map();
     this.deliveries = [];
+    this.releases = new Map();
+    this.licenses = new Map();
+    this.downloads = [];
+    this.auditLog = [];
+    this.ledger = [];
+    this.dailyAudits = new Map();
   }
 
   async getUser(id: string): Promise<User | undefined> {
@@ -94,9 +192,29 @@ export class MemStorage implements IStorage {
 
   async createUser(insertUser: InsertUser): Promise<User> {
     const id = randomUUID();
-    const user: User = { ...insertUser, id };
+    const user: User = {
+      ...insertUser,
+      password: hashPassword(insertUser.password),
+      role: "user",
+      id,
+      createdAt: new Date(),
+    };
     this.users.set(id, user);
     return user;
+  }
+
+  async listUsers(): Promise<User[]> {
+    return Array.from(this.users.values()).sort(
+      (a, b) => b.createdAt.getTime() - a.createdAt.getTime(),
+    );
+  }
+
+  async updateUserRole(id: string, role: string): Promise<User | undefined> {
+    const existing = this.users.get(id);
+    if (!existing) return undefined;
+    const updated = { ...existing, role };
+    this.users.set(id, updated);
+    return updated;
   }
 
   // --- Strategies ------------------------------------------------------------
@@ -289,6 +407,215 @@ export class MemStorage implements IStorage {
     };
     this.deliveries.push(record);
     return record;
+  }
+
+  // --- Releases (DaaS) --------------------------------------------------------
+
+  async getReleases(publishedOnly = false): Promise<Release[]> {
+    let out = Array.from(this.releases.values());
+    if (publishedOnly) out = out.filter((r) => r.published);
+    return out.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+  }
+
+  async getRelease(id: string): Promise<Release | undefined> {
+    return this.releases.get(id);
+  }
+
+  async createRelease(
+    release: Omit<Release, "id" | "createdAt" | "sha256" | "sizeBytes">,
+  ): Promise<Release> {
+    const data = Buffer.from(release.artifactData, "base64");
+    const record: Release = {
+      ...release,
+      id: randomUUID(),
+      sha256: sha256Hex(data),
+      sizeBytes: data.length,
+      createdAt: new Date(),
+    };
+    this.releases.set(record.id, record);
+    return record;
+  }
+
+  async updateRelease(
+    id: string,
+    update: Partial<Pick<Release, "version" | "channel" | "notes" | "published">>,
+  ): Promise<Release | undefined> {
+    const existing = this.releases.get(id);
+    if (!existing) return undefined;
+    const merged = { ...existing, ...update };
+    this.releases.set(id, merged);
+    return merged;
+  }
+
+  async deleteRelease(id: string): Promise<boolean> {
+    return this.releases.delete(id);
+  }
+
+  // --- Licenses ---------------------------------------------------------------
+
+  async getLicenses(): Promise<License[]> {
+    return Array.from(this.licenses.values()).sort(
+      (a, b) => b.createdAt.getTime() - a.createdAt.getTime(),
+    );
+  }
+
+  async getLicense(id: string): Promise<License | undefined> {
+    return this.licenses.get(id);
+  }
+
+  async getLicenseByKey(key: string): Promise<License | undefined> {
+    return Array.from(this.licenses.values()).find((l) => l.key === key);
+  }
+
+  async createLicense(
+    license: Pick<License, "userId" | "label" | "maxDownloads" | "expiresAt">,
+  ): Promise<License> {
+    const record: License = {
+      id: randomUUID(),
+      key: `NEXUS-${randomUUID().toUpperCase()}`,
+      userId: license.userId ?? null,
+      label: license.label,
+      status: "active",
+      maxDownloads: license.maxDownloads,
+      downloadsUsed: 0,
+      expiresAt: license.expiresAt ?? null,
+      createdAt: new Date(),
+    };
+    this.licenses.set(record.id, record);
+    return record;
+  }
+
+  async updateLicense(
+    id: string,
+    update: Partial<Pick<License, "label" | "status" | "maxDownloads">>,
+  ): Promise<License | undefined> {
+    const existing = this.licenses.get(id);
+    if (!existing) return undefined;
+    const merged = { ...existing, ...update };
+    this.licenses.set(id, merged);
+    return merged;
+  }
+
+  async incrementLicenseDownloads(id: string): Promise<void> {
+    const existing = this.licenses.get(id);
+    if (!existing) return;
+    this.licenses.set(id, {
+      ...existing,
+      downloadsUsed: existing.downloadsUsed + 1,
+    });
+  }
+
+  // --- Downloads ----------------------------------------------------------------
+
+  async getDownloads(): Promise<Download[]> {
+    return [...this.downloads].sort(
+      (a, b) => b.downloadedAt.getTime() - a.downloadedAt.getTime(),
+    );
+  }
+
+  async createDownload(
+    download: Omit<Download, "id" | "downloadedAt">,
+  ): Promise<Download> {
+    const record: Download = {
+      ...download,
+      id: randomUUID(),
+      downloadedAt: new Date(),
+    };
+    this.downloads.push(record);
+    return record;
+  }
+
+  // --- Audit log / ledger ---------------------------------------------------------
+
+  async appendAuditLog(
+    entry: Omit<AuditLogEntry, "id" | "ts"> & { ts?: Date },
+  ): Promise<AuditLogEntry> {
+    const record: AuditLogEntry = {
+      ...entry,
+      id: randomUUID(),
+      ts: entry.ts ?? new Date(),
+    };
+    this.auditLog.push(record);
+    return record;
+  }
+
+  async getAuditLog(limit = 1000): Promise<AuditLogEntry[]> {
+    return [...this.auditLog]
+      .sort((a, b) => b.ts.getTime() - a.ts.getTime())
+      .slice(0, limit);
+  }
+
+  async appendLedgerEntry(
+    entry: Omit<LedgerEntry, "id" | "ts"> & { ts?: Date },
+  ): Promise<LedgerEntry> {
+    const record: LedgerEntry = {
+      ...entry,
+      id: randomUUID(),
+      ts: entry.ts ?? new Date(),
+    };
+    this.ledger.push(record);
+    return record;
+  }
+
+  async getLedgerEntries(limit = 1000): Promise<LedgerEntry[]> {
+    return [...this.ledger]
+      .sort((a, b) => b.ts.getTime() - a.ts.getTime())
+      .slice(0, limit);
+  }
+
+  // --- Daily audits ----------------------------------------------------------------
+
+  async getDailyAudits(): Promise<DailyAudit[]> {
+    return Array.from(this.dailyAudits.values()).sort((a, b) =>
+      b.date.localeCompare(a.date),
+    );
+  }
+
+  async getDailyAudit(id: string): Promise<DailyAudit | undefined> {
+    return this.dailyAudits.get(id);
+  }
+
+  async getDailyAuditByDate(date: string): Promise<DailyAudit | undefined> {
+    return Array.from(this.dailyAudits.values()).find((a) => a.date === date);
+  }
+
+  async createDailyAudit(
+    audit: Omit<
+      DailyAudit,
+      "id" | "createdAt" | "reviewedBy" | "reviewedAt" | "reviewNote"
+    >,
+  ): Promise<DailyAudit> {
+    const record: DailyAudit = {
+      ...audit,
+      id: randomUUID(),
+      reviewedBy: null,
+      reviewedAt: null,
+      reviewNote: "",
+      createdAt: new Date(),
+    };
+    this.dailyAudits.set(record.id, record);
+    return record;
+  }
+
+  async reviewDailyAudit(
+    id: string,
+    decision: "approved" | "rejected",
+    reviewer: string,
+    note: string,
+    checklist?: AuditChecklistItem[],
+  ): Promise<DailyAudit | undefined> {
+    const existing = this.dailyAudits.get(id);
+    if (!existing) return undefined;
+    const updated: DailyAudit = {
+      ...existing,
+      status: decision,
+      reviewedBy: reviewer,
+      reviewedAt: new Date(),
+      reviewNote: note,
+      ...(checklist ? { checklist } : {}),
+    };
+    this.dailyAudits.set(id, updated);
+    return updated;
   }
 }
 
