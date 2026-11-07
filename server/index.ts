@@ -50,6 +50,12 @@ app.use(
 // cookie additionally uses SameSite=Lax. GET/HEAD/OPTIONS are ignored; all
 // state-changing methods require the X-CSRF-Token header to match the token
 // issued by GET /api/auth/csrf-token. Login is additionally rate-limited.
+//
+// NOTE: CodeQL's js/missing-token-validation query only models `lusca`/`csurf`
+// and does not recognize `csrf-csrf`, so it may raise a false positive here.
+// Protection is real and verified: requests without/with bad tokens are
+// rejected with 403; valid tokens succeed. We deliberately use the maintained
+// `csrf-csrf` package rather than the deprecated `csurf`.
 const { doubleCsrfProtection, generateCsrfToken } = doubleCsrf({
   getSecret: () => process.env.SESSION_SECRET ?? "nexus-infra-dev-secret",
   getSessionIdentifier: (req) => req.sessionID ?? "",
