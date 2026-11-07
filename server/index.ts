@@ -1,6 +1,8 @@
 import express, { type Request, Response, NextFunction } from "express";
 import session from "express-session";
 import createMemoryStore from "memorystore";
+import cookieParser from "cookie-parser";
+import { doubleCsrf } from "csrf-csrf";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
@@ -27,6 +29,7 @@ app.use(
 );
 
 app.use(express.urlencoded({ extended: false }));
+app.use(cookieParser());
 
 app.use(
   session({
@@ -36,8 +39,6 @@ app.use(
     store: new MemoryStore({ checkPeriod: 86_400_000 }),
     cookie: {
       httpOnly: true,
-      // SameSite=Lax blocks cross-site POSTs from carrying the session cookie,
-      // which is our primary CSRF defence for this JSON API.
       sameSite: "lax",
       secure: process.env.NODE_ENV === "production",
       maxAge: 7 * 24 * 3600 * 1000,
@@ -45,27 +46,32 @@ app.use(
   }),
 );
 
-// CSRF mitigation: reject state-changing requests that present a cross-site
-// Origin header. Combined with SameSite=Lax cookies and JSON-only bodies
-// (which require a CORS preflight for cross-origin fetch), this prevents
-// classic CSRF on the session cookie.
+// CSRF protection via csrf-csrf (double-submit cookie pattern). The session
+// cookie additionally uses SameSite=Lax. GET/HEAD/OPTIONS are ignored; all
+// state-changing methods require the X-CSRF-Token header to match the token
+// issued by GET /api/auth/csrf-token. The /api/auth/login route is exempt
+// (pre-session) but is rate-limited instead.
+const { doubleCsrfProtection, generateCsrfToken } = doubleCsrf({
+  getSecret: () => process.env.SESSION_SECRET ?? "nexus-infra-dev-secret",
+  getSessionIdentifier: (req) => req.sessionID ?? "",
+  cookieName: "nexus.csrf",
+  cookieOptions: {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+    path: "/",
+  },
+  ignoredMethods: ["GET", "HEAD", "OPTIONS"],
+  getCsrfTokenFromRequest: (req) => req.get("x-csrf-token"),
+});
+
+app.get("/api/auth/csrf-token", (req, res) => {
+  res.json({ csrfToken: generateCsrfToken(req, res) });
+});
+
 app.use((req, res, next) => {
-  if (["POST", "PUT", "PATCH", "DELETE"].includes(req.method)) {
-    const origin = req.get("origin");
-    if (origin) {
-      try {
-        const host = new URL(origin).host;
-        if (host !== req.get("host")) {
-          res.status(403).json({ message: "Cross-site request rejected" });
-          return;
-        }
-      } catch {
-        res.status(403).json({ message: "Invalid Origin header" });
-        return;
-      }
-    }
-  }
-  next();
+  if (req.path === "/api/auth/login") return next();
+  doubleCsrfProtection(req, res, next);
 });
 
 app.use(attachUser);
