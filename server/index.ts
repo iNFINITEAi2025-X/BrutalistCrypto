@@ -49,8 +49,7 @@ app.use(
 // CSRF protection via csrf-csrf (double-submit cookie pattern). The session
 // cookie additionally uses SameSite=Lax. GET/HEAD/OPTIONS are ignored; all
 // state-changing methods require the X-CSRF-Token header to match the token
-// issued by GET /api/auth/csrf-token. The /api/auth/login route is exempt
-// (pre-session) but is rate-limited instead.
+// issued by GET /api/auth/csrf-token. Login is additionally rate-limited.
 const { doubleCsrfProtection, generateCsrfToken } = doubleCsrf({
   getSecret: () => process.env.SESSION_SECRET ?? "nexus-infra-dev-secret",
   getSessionIdentifier: (req) => req.sessionID ?? "",
@@ -66,13 +65,13 @@ const { doubleCsrfProtection, generateCsrfToken } = doubleCsrf({
 });
 
 app.get("/api/auth/csrf-token", (req, res) => {
+  // Touch the session so the session cookie is issued alongside the CSRF
+  // cookie; the token is bound to the session identifier.
+  req.session.csrfIssuedAt = Date.now();
   res.json({ csrfToken: generateCsrfToken(req, res) });
 });
 
-app.use((req, res, next) => {
-  if (req.path === "/api/auth/login") return next();
-  doubleCsrfProtection(req, res, next);
-});
+app.use(doubleCsrfProtection);
 
 app.use(attachUser);
 
