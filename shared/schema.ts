@@ -454,3 +454,146 @@ export const reviewDailyAuditSchema = z.object({
 });
 export type ReviewDailyAuditRequest = z.infer<typeof reviewDailyAuditSchema>;
 export type DailyAudit = typeof dailyAudits.$inferSelect;
+
+// ---------------------------------------------------------------------------
+// RESILIENCE — mirrored VPS backup, failover, fallback parameters
+// ---------------------------------------------------------------------------
+
+export const NODE_ROLES = ["primary", "standby"] as const;
+export type NodeRole = (typeof NODE_ROLES)[number];
+
+export const NODE_STATUSES = ["healthy", "degraded", "unreachable"] as const;
+export type NodeStatus = (typeof NODE_STATUSES)[number];
+
+/** A peer VPS that mirrors this node's state (or that this node mirrors). */
+export const failoverNodes = pgTable("failover_nodes", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull(),
+  baseUrl: text("base_url").notNull().unique(),
+  role: text("role").notNull().default("standby"), // desired role
+  authToken: text("auth_token").notNull(), // shared secret for peer sync auth
+  status: text("status").notNull().default("unreachable"),
+  lastHeartbeatAt: timestamp("last_heartbeat_at"),
+  lastHeartbeatLatencyMs: integer("last_heartbeat_latency_ms"),
+  lastSnapshotAt: timestamp("last_snapshot_at"),
+  consecutiveFailures: integer("consecutive_failures").notNull().default(0),
+  enabled: boolean("enabled").notNull().default(true),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const insertNodeSchema = z.object({
+  name: z.string().min(1),
+  baseUrl: z.string().url(),
+  role: z.enum(NODE_ROLES).default("standby"),
+  authToken: z.string().min(8),
+});
+export const updateNodeSchema = z.object({
+  name: z.string().min(1).optional(),
+  baseUrl: z.string().url().optional(),
+  role: z.enum(NODE_ROLES).optional(),
+  enabled: z.boolean().optional(),
+  authToken: z.string().min(8).optional(),
+});
+export type InsertNode = z.infer<typeof insertNodeSchema>;
+export type UpdateNode = z.infer<typeof updateNodeSchema>;
+export type FailoverNode = typeof failoverNodes.$inferSelect;
+/** Never expose the shared auth token over the API. */
+export type PublicNode = Omit<FailoverNode, "authToken">;
+
+export const LOCKDOWN_LEVELS = ["none", "guarded", "halted"] as const;
+export type LockdownLevel = (typeof LOCKDOWN_LEVELS)[number];
+
+/**
+ * Fallback parameters — the degradation ladder applied when security or
+ * trading-quality signals deteriorate (e.g. all mirrors unreachable, critical
+ * audit anomalies, feed staleness).
+ */
+export const fallbackConfig = pgTable("fallback_config", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  // --- mirror / failover thresholds ---
+  heartbeatIntervalMs: integer("heartbeat_interval_ms").notNull().default(15_000),
+  heartbeatTimeoutMs: integer("heartbeat_timeout_ms").notNull().default(5_000),
+  maxConsecutiveFailures: integer("max_consecutive_failures").notNull().default(3),
+  autoFailover: boolean("auto_failover").notNull().default(true),
+  syncBatchSize: integer("sync_batch_size").notNull().default(500),
+  // --- trading-quality fallbacks ---
+  maxFeedStalenessMs: integer("max_feed_staleness_ms").notNull().default(60_000),
+  qualityDegradedVolatilityPct: doublePrecision("quality_degraded_volatility_pct")
+    .notNull()
+    .default(8), // above this, quality considered degraded
+  haltOnCriticalAnomaly: boolean("halt_on_critical_anomaly").notNull().default(true),
+  // --- security lockdown ---
+  lockdownLevel: text("lockdown_level").notNull().default("none"),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  updatedBy: text("updated_by").notNull().default("system"),
+});
+
+export const updateFallbackConfigSchema = z.object({
+  heartbeatIntervalMs: z.number().int().min(1000).max(300_000).optional(),
+  heartbeatTimeoutMs: z.number().int().min(500).max(60_000).optional(),
+  maxConsecutiveFailures: z.number().int().min(1).max(100).optional(),
+  autoFailover: z.boolean().optional(),
+  syncBatchSize: z.number().int().min(1).max(10_000).optional(),
+  maxFeedStalenessMs: z.number().int().min(1000).optional(),
+  qualityDegradedVolatilityPct: z.number().min(0).max(100).optional(),
+  haltOnCriticalAnomaly: z.boolean().optional(),
+  lockdownLevel: z.enum(LOCKDOWN_LEVELS).optional(),
+});
+export type UpdateFallbackConfig = z.infer<typeof updateFallbackConfigSchema>;
+export type FallbackConfig = typeof fallbackConfig.$inferSelect;
+
+export const FAILOVER_EVENT_TYPES = [
+  "node.registered",
+  "node.heartbeat_ok",
+  "node.unreachable",
+  "node.recovered",
+  "snapshot.pushed",
+  "snapshot.applied",
+  "failover.promoted",
+  "failover.demoted",
+  "lockdown.changed",
+  "quality.degraded",
+  "quality.restored",
+] as const;
+export type FailoverEventType = (typeof FAILOVER_EVENT_TYPES)[number];
+
+export const failoverEvents = pgTable("failover_events", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  ts: timestamp("ts").notNull().defaultNow(),
+  type: text("type").notNull(),
+  nodeId: varchar("node_id"),
+  detail: jsonb("detail").notNull().default({}),
+  severity: text("severity").notNull().default("info"),
+});
+export type FailoverEvent = typeof failoverEvents.$inferSelect;
+
+/** A point-in-time snapshot of replicable state, pushed to / pulled by peers. */
+export interface ReplicationSnapshot {
+  id: string;
+  createdAt: string;
+  node: string; // name of the node that produced the snapshot
+  sequence: number;
+  strategies: unknown[];
+  trades: unknown[];
+  releases: unknown[];
+  licenses: unknown[];
+  dailyAudits: unknown[];
+  ledger: unknown[];
+  auditLog: unknown[];
+  checksum: string; // sha256 over the canonical payload
+}
+
+export const replicationEnvelopeSchema = z.object({
+  node: z.string().min(1),
+  sequence: z.number().int().min(0),
+  createdAt: z.string(),
+  strategies: z.array(z.unknown()),
+  trades: z.array(z.unknown()),
+  releases: z.array(z.unknown()),
+  licenses: z.array(z.unknown()),
+  dailyAudits: z.array(z.unknown()),
+  ledger: z.array(z.unknown()),
+  auditLog: z.array(z.unknown()),
+  checksum: z.string().min(1),
+});
+export type ReplicationEnvelope = z.infer<typeof replicationEnvelopeSchema>;

@@ -19,6 +19,9 @@ import {
   type LedgerEntry,
   type DailyAudit,
   type AuditChecklistItem,
+  type FailoverNode,
+  type FallbackConfig,
+  type FailoverEvent,
 } from "@shared/schema";
 import { randomUUID, createHash, scryptSync, timingSafeEqual } from "crypto";
 
@@ -149,6 +152,43 @@ export interface IStorage {
     note: string,
     checklist?: AuditChecklistItem[],
   ): Promise<DailyAudit | undefined>;
+
+  // Failover / resilience
+  getFailoverNodes(): Promise<FailoverNode[]>;
+  getFailoverNode(id: string): Promise<FailoverNode | undefined>;
+  createFailoverNode(
+    node: Pick<FailoverNode, "name" | "baseUrl" | "role" | "authToken">,
+  ): Promise<FailoverNode>;
+  updateFailoverNode(
+    id: string,
+    update: Partial<
+      Pick<
+        FailoverNode,
+        | "name"
+        | "baseUrl"
+        | "role"
+        | "enabled"
+        | "authToken"
+        | "status"
+        | "lastHeartbeatAt"
+        | "lastHeartbeatLatencyMs"
+        | "lastSnapshotAt"
+        | "consecutiveFailures"
+      >
+    >,
+  ): Promise<FailoverNode | undefined>;
+  deleteFailoverNode(id: string): Promise<boolean>;
+
+  getFallbackConfig(): Promise<FallbackConfig>;
+  updateFallbackConfig(
+    update: Partial<FallbackConfig>,
+    updatedBy: string,
+  ): Promise<FallbackConfig>;
+
+  appendFailoverEvent(
+    event: Omit<FailoverEvent, "id" | "ts"> & { ts?: Date },
+  ): Promise<FailoverEvent>;
+  getFailoverEvents(limit?: number): Promise<FailoverEvent[]>;
 }
 
 export class MemStorage implements IStorage {
@@ -164,6 +204,9 @@ export class MemStorage implements IStorage {
   private auditLog: AuditLogEntry[];
   private ledger: LedgerEntry[];
   private dailyAudits: Map<string, DailyAudit>;
+  private failoverNodes: Map<string, FailoverNode>;
+  private fallbackConfig: FallbackConfig;
+  private failoverEvents: FailoverEvent[];
 
   constructor() {
     this.users = new Map();
@@ -178,6 +221,22 @@ export class MemStorage implements IStorage {
     this.auditLog = [];
     this.ledger = [];
     this.dailyAudits = new Map();
+    this.failoverNodes = new Map();
+    this.failoverEvents = [];
+    this.fallbackConfig = {
+      id: randomUUID(),
+      heartbeatIntervalMs: 15_000,
+      heartbeatTimeoutMs: 5_000,
+      maxConsecutiveFailures: 3,
+      autoFailover: true,
+      syncBatchSize: 500,
+      maxFeedStalenessMs: 60_000,
+      qualityDegradedVolatilityPct: 8,
+      haltOnCriticalAnomaly: true,
+      lockdownLevel: "none",
+      updatedAt: new Date(),
+      updatedBy: "system",
+    };
   }
 
   async getUser(id: string): Promise<User | undefined> {
@@ -616,6 +675,108 @@ export class MemStorage implements IStorage {
     };
     this.dailyAudits.set(id, updated);
     return updated;
+  }
+
+  // --- Failover / resilience ---------------------------------------------------
+
+  async getFailoverNodes(): Promise<FailoverNode[]> {
+    return Array.from(this.failoverNodes.values()).sort(
+      (a, b) => b.createdAt.getTime() - a.createdAt.getTime(),
+    );
+  }
+
+  async getFailoverNode(id: string): Promise<FailoverNode | undefined> {
+    return this.failoverNodes.get(id);
+  }
+
+  async createFailoverNode(
+    node: Pick<FailoverNode, "name" | "baseUrl" | "role" | "authToken">,
+  ): Promise<FailoverNode> {
+    const record: FailoverNode = {
+      id: randomUUID(),
+      name: node.name,
+      baseUrl: node.baseUrl.replace(/\/$/, ""),
+      role: node.role,
+      authToken: node.authToken,
+      status: "unreachable",
+      lastHeartbeatAt: null,
+      lastHeartbeatLatencyMs: null,
+      lastSnapshotAt: null,
+      consecutiveFailures: 0,
+      enabled: true,
+      createdAt: new Date(),
+    };
+    this.failoverNodes.set(record.id, record);
+    return record;
+  }
+
+  async updateFailoverNode(
+    id: string,
+    update: Partial<
+      Pick<
+        FailoverNode,
+        | "name"
+        | "baseUrl"
+        | "role"
+        | "enabled"
+        | "authToken"
+        | "status"
+        | "lastHeartbeatAt"
+        | "lastHeartbeatLatencyMs"
+        | "lastSnapshotAt"
+        | "consecutiveFailures"
+      >
+    >,
+  ): Promise<FailoverNode | undefined> {
+    const existing = this.failoverNodes.get(id);
+    if (!existing) return undefined;
+    const merged: FailoverNode = {
+      ...existing,
+      ...update,
+      ...(update.baseUrl ? { baseUrl: update.baseUrl.replace(/\/$/, "") } : {}),
+    };
+    this.failoverNodes.set(id, merged);
+    return merged;
+  }
+
+  async deleteFailoverNode(id: string): Promise<boolean> {
+    return this.failoverNodes.delete(id);
+  }
+
+  async getFallbackConfig(): Promise<FallbackConfig> {
+    return this.fallbackConfig;
+  }
+
+  async updateFallbackConfig(
+    update: Partial<FallbackConfig>,
+    updatedBy: string,
+  ): Promise<FallbackConfig> {
+    this.fallbackConfig = {
+      ...this.fallbackConfig,
+      ...update,
+      id: this.fallbackConfig.id,
+      updatedAt: new Date(),
+      updatedBy,
+    };
+    return this.fallbackConfig;
+  }
+
+  async appendFailoverEvent(
+    event: Omit<FailoverEvent, "id" | "ts"> & { ts?: Date },
+  ): Promise<FailoverEvent> {
+    const record: FailoverEvent = {
+      ...event,
+      id: randomUUID(),
+      ts: event.ts ?? new Date(),
+    };
+    this.failoverEvents.push(record);
+    return record;
+  }
+
+  async getFailoverEvents(limit = 500): Promise<FailoverEvent[]> {
+    return [...this.failoverEvents]
+      .sort((a, b) => b.ts.getTime() - a.ts.getTime())
+      .slice(0, limit);
   }
 }
 
