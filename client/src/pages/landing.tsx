@@ -31,6 +31,9 @@ function Navbar() {
         <div className="hidden md:flex items-center gap-8 font-mono text-sm">
           <a href="#" className="hover:text-primary uppercase tracking-widest">Nodes</a>
           <a href="#" className="hover:text-primary uppercase tracking-widest">RPC</a>
+          <Link href="/trades">
+            <a className="hover:text-primary uppercase tracking-widest cursor-pointer">Trades</a>
+          </Link>
           <Link href="/docs">
             <a className="hover:text-primary uppercase tracking-widest cursor-pointer">Docs</a>
           </Link>
